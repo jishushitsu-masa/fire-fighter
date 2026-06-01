@@ -1,262 +1,190 @@
 // --- Constants & State ---
 const MEMBERS_COUNT = 20;
-const STORAGE_KEY = 'fire_fighter_attendance';
+const STORAGE_KEY_HISTORY = 'fire_fighter_history_v2';
+const STORAGE_KEY_MEMBERS = 'fire_fighter_members_v2';
 
-let historyData = [];
-let currentRecordId = null;
-let currentAttendance = {}; // { 1: true, 2: false, ... }
+let historyData = []; // [{ id, date, content, attendance: { memberId: 'attend' | 'absent' | '' } }]
+let memberNames = {}; // { 1: '団員1', 2: '団員2', ... }
 
 // --- DOM Elements ---
-const viewHome = document.getElementById('view-home');
-const viewForm = document.getElementById('view-form');
-const historyList = document.getElementById('history-list');
-const membersList = document.getElementById('members-list');
-const attendCountSpan = document.getElementById('attend-count');
-const formTitle = document.getElementById('form-title');
-
-// Buttons & Inputs
-const btnNew = document.getElementById('btn-new');
-const btnBack = document.getElementById('btn-back');
+const rowDates = document.getElementById('row-dates');
+const rowContents = document.getElementById('row-contents');
+const tableBody = document.getElementById('table-body');
 const btnExport = document.getElementById('btn-export');
 const inputImport = document.getElementById('import-file');
-const btnAllAttend = document.getElementById('btn-all-attend');
-const btnAllAbsent = document.getElementById('btn-all-absent');
-const btnDelete = document.getElementById('btn-delete');
-const form = document.getElementById('attendance-form');
-
-const dateInput = document.getElementById('date-input');
-const contentInput = document.getElementById('content-input');
-const recordIdInput = document.getElementById('record-id');
 
 // --- Initialization ---
 function init() {
     loadData();
-    renderHistory();
+    renderTable();
     setupEventListeners();
-    generateMembersList();
 }
 
 // --- Data Management ---
 function loadData() {
-    const data = localStorage.getItem(STORAGE_KEY);
-    if (data) {
+    // Load Members
+    const savedMembers = localStorage.getItem(STORAGE_KEY_MEMBERS);
+    if (savedMembers) {
         try {
-            historyData = JSON.parse(data);
-            // Sort by date descending
-            historyData.sort((a, b) => new Date(b.date) - new Date(a.date));
-        } catch (e) {
-            console.error('Failed to parse local storage data', e);
-            historyData = [];
+            memberNames = JSON.parse(savedMembers);
+        } catch(e) { console.error(e); }
+    }
+    // Ensure all 20 members exist
+    for (let i = 1; i <= MEMBERS_COUNT; i++) {
+        if (!memberNames[i]) {
+            memberNames[i] = `団員${i}`;
         }
+    }
+
+    // Load History
+    const savedHistory = localStorage.getItem(STORAGE_KEY_HISTORY);
+    if (savedHistory) {
+        try {
+            historyData = JSON.parse(savedHistory);
+        } catch(e) { console.error(e); historyData = []; }
     } else {
         historyData = [];
     }
 }
 
 function saveData() {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(historyData));
+    localStorage.setItem(STORAGE_KEY_MEMBERS, JSON.stringify(memberNames));
+    localStorage.setItem(STORAGE_KEY_HISTORY, JSON.stringify(historyData));
 }
 
-// --- View Management ---
-function switchView(viewName) {
-    if (viewName === 'home') {
-        viewForm.classList.remove('active');
-        viewHome.classList.add('active');
-        renderHistory();
-    } else if (viewName === 'form') {
-        viewHome.classList.remove('active');
-        viewForm.classList.add('active');
-    }
-    window.scrollTo(0, 0);
-}
-
-// --- Render History ---
-function renderHistory() {
-    historyList.innerHTML = '';
-    
-    if (historyData.length === 0) {
-        historyList.innerHTML = `
-            <div class="empty-state">
-                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
-                <p>登録された履歴がありません。<br>「新規活動を登録」から追加してください。</p>
-            </div>
-        `;
-        return;
-    }
-
-    historyData.forEach(record => {
-        const attendCount = Object.values(record.attendance).filter(v => v).length;
-        
-        const card = document.createElement('div');
-        card.className = 'history-card';
-        card.innerHTML = `
-            <div class="history-info">
-                <span class="history-date">${formatDate(record.date)}</span>
-                <span class="history-content">${record.content}</span>
-            </div>
-            <div class="history-stats">
-                ${attendCount}/${MEMBERS_COUNT}名
-            </div>
-        `;
-        
-        card.addEventListener('click', () => openEditForm(record.id));
-        historyList.appendChild(card);
+// --- Render Table ---
+function renderTable() {
+    // 1. Render Dates Row
+    let datesHtml = `<th>日程</th>`;
+    historyData.forEach(col => {
+        const formattedDate = col.date ? new Date(col.date).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' }) : '未設定';
+        datesHtml += `<th class="editable" onclick="editDate('${col.id}')">${formattedDate}</th>`;
     });
-}
+    // Add Column Button (rowspan=2)
+    datesHtml += `<th rowspan="2" style="width: 60px;"><button class="add-col-btn" onclick="addColumn()">+</button></th>`;
+    rowDates.innerHTML = datesHtml;
 
-function formatDate(dateString) {
-    const d = new Date(dateString);
-    const days = ['日', '月', '火', '水', '木', '金', '土'];
-    return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 (${days[d.getDay()]})`;
-}
+    // 2. Render Contents Row
+    let contentsHtml = `<th>内容</th>`;
+    historyData.forEach(col => {
+        contentsHtml += `<th class="editable" onclick="editContent('${col.id}')">${col.content || '未設定'}</th>`;
+    });
+    rowContents.innerHTML = contentsHtml;
 
-// --- Form Management ---
-function generateMembersList() {
-    membersList.innerHTML = '';
+    // 3. Render Body (Members and Attendance)
+    let bodyHtml = '';
     for (let i = 1; i <= MEMBERS_COUNT; i++) {
-        const item = document.createElement('div');
-        item.className = 'member-item';
+        bodyHtml += `<tr>`;
+        bodyHtml += `<th class="editable" onclick="editMemberName(${i})">${memberNames[i]}</th>`;
         
-        const nameSpan = document.createElement('span');
-        nameSpan.className = 'member-name';
-        nameSpan.textContent = `団員${i}`;
-        
-        const toggleBtn = document.createElement('button');
-        toggleBtn.type = 'button';
-        toggleBtn.className = 'toggle-btn';
-        toggleBtn.dataset.id = i;
-        
-        toggleBtn.addEventListener('click', () => {
-            currentAttendance[i] = !currentAttendance[i];
-            updateMemberToggle(toggleBtn, currentAttendance[i]);
-            updateAttendCount();
+        historyData.forEach(col => {
+            const status = col.attendance[i] || ''; // 'attend', 'absent', ''
+            let displayChar = '';
+            let btnClass = 'cell-btn';
+            
+            if (status === 'attend') {
+                displayChar = '〇';
+                btnClass += ' attend';
+            } else if (status === 'absent') {
+                displayChar = '×';
+                btnClass += ' absent';
+            }
+
+            bodyHtml += `<td><button class="${btnClass}" onclick="toggleAttendance(${i}, '${col.id}')">${displayChar}</button></td>`;
         });
         
-        item.appendChild(nameSpan);
-        item.appendChild(toggleBtn);
-        membersList.appendChild(item);
+        bodyHtml += `</tr>`;
     }
+    tableBody.innerHTML = bodyHtml;
 }
 
-function updateMemberToggle(btn, isAttend) {
-    if (isAttend) {
-        btn.classList.add('attend');
-    } else {
-        btn.classList.remove('attend');
-    }
+// --- Interactions ---
+function toggleAttendance(memberId, colId) {
+    const colIndex = historyData.findIndex(col => col.id === colId);
+    if (colIndex === -1) return;
+
+    const currentStatus = historyData[colIndex].attendance[memberId] || '';
+    let nextStatus = '';
+
+    if (currentStatus === '') nextStatus = 'attend';
+    else if (currentStatus === 'attend') nextStatus = 'absent';
+    else nextStatus = '';
+
+    historyData[colIndex].attendance[memberId] = nextStatus;
+    saveData();
+    renderTable(); // Re-render to show changes
 }
 
-function updateAttendCount() {
-    const count = Object.values(currentAttendance).filter(v => v).length;
-    attendCountSpan.textContent = `出席: ${count}名 / ${MEMBERS_COUNT}名`;
-}
-
-function resetForm() {
-    currentRecordId = null;
-    formTitle.textContent = '新規登録';
-    
-    // Set today's date as default
+window.addColumn = function() {
     const today = new Date();
     const yyyy = today.getFullYear();
     const mm = String(today.getMonth() + 1).padStart(2, '0');
     const dd = String(today.getDate()).padStart(2, '0');
-    dateInput.value = `${yyyy}-${mm}-${dd}`;
-    
-    contentInput.value = '';
-    btnDelete.classList.add('hidden');
-    
-    // Default all to absent
-    for (let i = 1; i <= MEMBERS_COUNT; i++) {
-        currentAttendance[i] = false;
-    }
-    refreshMembersUI();
-}
+    const defaultDate = `${yyyy}-${mm}-${dd}`;
 
-function refreshMembersUI() {
-    const btns = membersList.querySelectorAll('.toggle-btn');
-    btns.forEach(btn => {
-        const id = btn.dataset.id;
-        updateMemberToggle(btn, currentAttendance[id]);
-    });
-    updateAttendCount();
-}
-
-function openEditForm(id) {
-    const record = historyData.find(r => r.id === id);
-    if (!record) return;
-    
-    currentRecordId = record.id;
-    formTitle.textContent = '活動の編集';
-    
-    dateInput.value = record.date;
-    contentInput.value = record.content;
-    currentAttendance = { ...record.attendance };
-    
-    btnDelete.classList.remove('hidden');
-    refreshMembersUI();
-    
-    switchView('form');
-}
-
-function saveRecord(e) {
-    e.preventDefault();
-    
-    const date = dateInput.value;
-    const content = contentInput.value.trim();
-    
-    if (!date || !content) {
-        showToast('日付と内容を入力してください。');
-        return;
-    }
-    
-    const newRecord = {
-        id: currentRecordId || Date.now().toString(),
-        date,
-        content,
-        attendance: { ...currentAttendance }
+    const newCol = {
+        id: Date.now().toString(),
+        date: defaultDate,
+        content: '活動内容',
+        attendance: {}
     };
     
-    if (currentRecordId) {
-        // Update
-        const index = historyData.findIndex(r => r.id === currentRecordId);
-        if (index !== -1) historyData[index] = newRecord;
-    } else {
-        // Create
-        historyData.push(newRecord);
-    }
-    
+    historyData.push(newCol);
     saveData();
-    showToast('保存しました。');
-    switchView('home');
-}
+    renderTable();
+    showToast('新しい列を追加しました。日付と内容をタップして編集してください。');
+};
 
-function deleteRecord() {
-    if (!currentRecordId) return;
+window.editDate = function(colId) {
+    const col = historyData.find(c => c.id === colId);
+    if (!col) return;
     
-    if (confirm('この記録を削除してもよろしいですか？')) {
-        historyData = historyData.filter(r => r.id !== currentRecordId);
+    const newDate = prompt('日程を入力してください (例: 2026-04-15)', col.date);
+    if (newDate !== null && newDate.trim() !== '') {
+        col.date = newDate.trim();
         saveData();
-        showToast('削除しました。');
-        switchView('home');
+        renderTable();
+    } else if (newDate !== null && newDate.trim() === '') {
+        if(confirm('この列を削除しますか？')) {
+            historyData = historyData.filter(c => c.id !== colId);
+            saveData();
+            renderTable();
+            showToast('列を削除しました。');
+        }
     }
-}
+};
 
-// --- Bulk Actions ---
-function setAllAttend(attend) {
-    for (let i = 1; i <= MEMBERS_COUNT; i++) {
-        currentAttendance[i] = attend;
+window.editContent = function(colId) {
+    const col = historyData.find(c => c.id === colId);
+    if (!col) return;
+    
+    const newContent = prompt('活動内容を入力してください', col.content);
+    if (newContent !== null) {
+        col.content = newContent.trim();
+        saveData();
+        renderTable();
     }
-    refreshMembersUI();
-}
+};
+
+window.editMemberName = function(memberId) {
+    const currentName = memberNames[memberId];
+    const newName = prompt('団員の名前を入力してください', currentName);
+    
+    if (newName !== null && newName.trim() !== '') {
+        memberNames[memberId] = newName.trim();
+        saveData();
+        renderTable();
+    }
+};
 
 // --- Export & Import ---
 function exportData() {
-    if (historyData.length === 0) {
-        showToast('エクスポートするデータがありません。');
-        return;
-    }
+    const dataToExport = {
+        memberNames,
+        historyData
+    };
     
-    const dataStr = JSON.stringify(historyData, null, 2);
+    const dataStr = JSON.stringify(dataToExport, null, 2);
     const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
     
     const exportFileDefaultName = `消防団出席データ_${new Date().toISOString().split('T')[0]}.json`;
@@ -278,33 +206,53 @@ function importData(event) {
         try {
             const importedData = JSON.parse(e.target.result);
             
-            // Basic validation
-            if (!Array.isArray(importedData)) throw new Error('Invalid format');
+            if (!importedData.memberNames || !importedData.historyData) {
+                throw new Error('Invalid format (v2)');
+            }
             
-            if (confirm('既存のデータと結合（上書き）しますか？')) {
-                // Merge logic (upsert based on ID)
-                importedData.forEach(newRec => {
-                    const existingIndex = historyData.findIndex(r => r.id === newRec.id);
-                    if (existingIndex !== -1) {
-                        historyData[existingIndex] = newRec; // Overwrite
-                    } else {
-                        historyData.push(newRec); // Add new
-                    }
-                });
+            if (confirm('既存のデータを上書きしますか？')) {
+                memberNames = importedData.memberNames;
+                historyData = importedData.historyData;
                 
                 saveData();
-                loadData(); // Reload to sort
-                renderHistory();
+                renderTable();
                 showToast('データをインポートしました。');
             }
         } catch (err) {
             console.error(err);
-            showToast('ファイルの読み込みに失敗しました。形式を確認してください。');
+            
+            // Try to import v1 data as fallback
+            try {
+                const importedV1 = JSON.parse(e.target.result);
+                if (Array.isArray(importedV1)) {
+                    if (confirm('古い形式のデータが検出されました。変換してインポートしますか？')) {
+                        // Convert v1 to v2
+                        historyData = importedV1.map(v1 => {
+                            const newAtt = {};
+                            Object.keys(v1.attendance).forEach(k => {
+                                newAtt[k] = v1.attendance[k] ? 'attend' : 'absent';
+                            });
+                            return {
+                                id: v1.id,
+                                date: v1.date,
+                                content: v1.content,
+                                attendance: newAtt
+                            };
+                        });
+                        saveData();
+                        renderTable();
+                        showToast('古い形式のデータを変換してインポートしました。');
+                        return;
+                    }
+                } else {
+                    showToast('ファイルの読み込みに失敗しました。形式を確認してください。');
+                }
+            } catch(e2) {
+                showToast('ファイルの読み込みに失敗しました。形式を確認してください。');
+            }
         }
     };
     reader.readAsText(file);
-    
-    // Reset file input
     event.target.value = '';
 }
 
@@ -323,21 +271,11 @@ function showToast(message) {
 
 // --- Event Listeners Setup ---
 function setupEventListeners() {
-    btnNew.addEventListener('click', () => {
-        resetForm();
-        switchView('form');
-    });
-    
-    btnBack.addEventListener('click', () => switchView('home'));
-    
-    form.addEventListener('submit', saveRecord);
-    btnDelete.addEventListener('click', deleteRecord);
-    
-    btnAllAttend.addEventListener('click', () => setAllAttend(true));
-    btnAllAbsent.addEventListener('click', () => setAllAttend(false));
-    
     btnExport.addEventListener('click', exportData);
     inputImport.addEventListener('change', importData);
+    
+    // Attach window functions to global scope since they are used in onclick inline handlers
+    // (Already attached as window.xxx = function...)
 }
 
 // --- Run ---
