@@ -143,7 +143,8 @@ function renderTable() {
     // 1. Render Dates Row
     let datesHtml = `<th>日程</th>`;
     historyData.forEach(col => {
-        const formattedDate = col.date ? new Date(col.date).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' }) : '未設定';
+        // スプレッドシート側の入力（4/15など）をそのまま表示する
+        const formattedDate = col.date ? col.date : '未設定';
         datesHtml += `<th class="editable" onclick="editDate('${col.id}')">${formattedDate}</th>`;
     });
     datesHtml += `<th rowspan="2" style="width: 60px;"><button class="add-col-btn" onclick="addColumn()">+</button></th>`;
@@ -202,10 +203,9 @@ window.toggleAttendance = function(memberId, colId) {
 
 window.addColumn = function() {
     const today = new Date();
-    const yyyy = today.getFullYear();
-    const mm = String(today.getMonth() + 1).padStart(2, '0');
-    const dd = String(today.getDate()).padStart(2, '0');
-    const defaultDate = `${yyyy}-${mm}-${dd}`;
+    const mm = today.getMonth() + 1;
+    const dd = today.getDate();
+    const defaultDate = `${mm}/${dd}`;
 
     const newCol = {
         id: Date.now().toString(),
