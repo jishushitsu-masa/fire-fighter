@@ -264,3 +264,20 @@ thead tr:nth-child(2) th:first-child {
     transform: translateX(-50%) translateY(0);
     opacity: 1;
 }
+
+/* Sync Status */
+.sync-status {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-left: 12px;
+    font-weight: normal;
+    transition: color 0.3s;
+}
+
+.sync-status.syncing {
+    color: var(--primary);
+}
+
+.sync-status.error {
+    color: var(--danger);
+}
