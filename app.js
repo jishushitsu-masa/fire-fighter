@@ -1,10 +1,12 @@
 // --- Constants & State ---
 const MEMBERS_COUNT = 20;
-const STORAGE_KEY_HISTORY = 'fire_fighter_history_v2';
-const STORAGE_KEY_MEMBERS = 'fire_fighter_members_v2';
+
+// 【重要】ここにGASで発行された「ウェブアプリのURL」を貼り付けてください
+const GAS_WEBAPP_URL = "";
 
 let historyData = []; // [{ id, date, content, attendance: { memberId: 'attend' | 'absent' | '' } }]
 let memberNames = {}; // { 1: '団員1', 2: '団員2', ... }
+let isSyncing = false;
 
 // --- DOM Elements ---
 const rowDates = document.getElementById('row-dates');
@@ -12,44 +14,128 @@ const rowContents = document.getElementById('row-contents');
 const tableBody = document.getElementById('table-body');
 const btnExport = document.getElementById('btn-export');
 const inputImport = document.getElementById('import-file');
+const syncStatusEl = document.getElementById('sync-status');
 
 // --- Initialization ---
-function init() {
-    loadData();
+async function init() {
+    if (!GAS_WEBAPP_URL) {
+        showToast("GASのURLが設定されていません。コード内の GAS_WEBAPP_URL を設定してください。");
+        // URLがない場合はローカルでダミーデータとして動かすための初期化
+        initializeDefaultMembers();
+        renderTable();
+        return;
+    }
+
+    updateSyncStatus("読込中...");
+    await loadData();
     renderTable();
     setupEventListeners();
+    
+    // 定期ポーリング（5秒ごと）
+    setInterval(pollData, 5000);
 }
 
-// --- Data Management ---
-function loadData() {
-    // Load Members
-    const savedMembers = localStorage.getItem(STORAGE_KEY_MEMBERS);
-    if (savedMembers) {
-        try {
-            memberNames = JSON.parse(savedMembers);
-        } catch(e) { console.error(e); }
-    }
-    // Ensure all 20 members exist
+function initializeDefaultMembers() {
     for (let i = 1; i <= MEMBERS_COUNT; i++) {
         if (!memberNames[i]) {
             memberNames[i] = `団員${i}`;
         }
     }
+}
 
-    // Load History
-    const savedHistory = localStorage.getItem(STORAGE_KEY_HISTORY);
-    if (savedHistory) {
-        try {
-            historyData = JSON.parse(savedHistory);
-        } catch(e) { console.error(e); historyData = []; }
+// --- Data Management (GAS Sync) ---
+function updateSyncStatus(text, isError = false) {
+    if (!syncStatusEl) return;
+    syncStatusEl.textContent = text;
+    if (isError) {
+        syncStatusEl.className = "sync-status error";
+    } else if (text) {
+        syncStatusEl.className = "sync-status syncing";
     } else {
-        historyData = [];
+        syncStatusEl.className = "sync-status";
     }
 }
 
-function saveData() {
-    localStorage.setItem(STORAGE_KEY_MEMBERS, JSON.stringify(memberNames));
-    localStorage.setItem(STORAGE_KEY_HISTORY, JSON.stringify(historyData));
+async function loadData() {
+    if (!GAS_WEBAPP_URL) return;
+    try {
+        isSyncing = true;
+        const response = await fetch(GAS_WEBAPP_URL);
+        const data = await response.json();
+        
+        if (data && data.memberNames && data.historyData) {
+            memberNames = data.memberNames;
+            historyData = data.historyData;
+        } else {
+            initializeDefaultMembers();
+        }
+        updateSyncStatus("");
+    } catch(err) {
+        console.error("Load Error:", err);
+        updateSyncStatus("通信エラー", true);
+        initializeDefaultMembers();
+    } finally {
+        isSyncing = false;
+    }
+}
+
+async function saveData() {
+    if (!GAS_WEBAPP_URL) return;
+    try {
+        isSyncing = true;
+        updateSyncStatus("保存中...");
+        
+        const dataToSave = {
+            memberNames,
+            historyData
+        };
+
+        const response = await fetch(GAS_WEBAPP_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'text/plain', // CORS回避のために text/plain を使用
+            },
+            body: JSON.stringify(dataToSave)
+        });
+        
+        const result = await response.json();
+        if (result.status === "success") {
+            updateSyncStatus("");
+        } else {
+            updateSyncStatus("保存エラー", true);
+            console.error(result.message);
+        }
+    } catch(err) {
+        console.error("Save Error:", err);
+        updateSyncStatus("通信エラー", true);
+    } finally {
+        isSyncing = false;
+    }
+}
+
+async function pollData() {
+    if (isSyncing || !GAS_WEBAPP_URL) return; // 保存中や読み込み中はスキップ
+    
+    try {
+        const response = await fetch(GAS_WEBAPP_URL);
+        const data = await response.json();
+        
+        if (data && data.memberNames && data.historyData) {
+            // 現在のデータと比較し、差分があれば更新する
+            const currentStr = JSON.stringify({ memberNames, historyData });
+            const fetchStr = JSON.stringify(data);
+            
+            if (currentStr !== fetchStr) {
+                memberNames = data.memberNames;
+                historyData = data.historyData;
+                renderTable();
+            }
+        }
+        updateSyncStatus("");
+    } catch(err) {
+        console.error("Poll Error:", err);
+        updateSyncStatus("通信エラー", true);
+    }
 }
 
 // --- Render Table ---
@@ -60,7 +146,6 @@ function renderTable() {
         const formattedDate = col.date ? new Date(col.date).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' }) : '未設定';
         datesHtml += `<th class="editable" onclick="editDate('${col.id}')">${formattedDate}</th>`;
     });
-    // Add Column Button (rowspan=2)
     datesHtml += `<th rowspan="2" style="width: 60px;"><button class="add-col-btn" onclick="addColumn()">+</button></th>`;
     rowDates.innerHTML = datesHtml;
 
@@ -99,7 +184,7 @@ function renderTable() {
 }
 
 // --- Interactions ---
-function toggleAttendance(memberId, colId) {
+window.toggleAttendance = function(memberId, colId) {
     const colIndex = historyData.findIndex(col => col.id === colId);
     if (colIndex === -1) return;
 
@@ -111,8 +196,8 @@ function toggleAttendance(memberId, colId) {
     else nextStatus = '';
 
     historyData[colIndex].attendance[memberId] = nextStatus;
-    saveData();
-    renderTable(); // Re-render to show changes
+    renderTable(); // すぐに画面に反映
+    saveData();    // 裏で非同期保存
 }
 
 window.addColumn = function() {
@@ -130,8 +215,8 @@ window.addColumn = function() {
     };
     
     historyData.push(newCol);
-    saveData();
     renderTable();
+    saveData();
     showToast('新しい列を追加しました。日付と内容をタップして編集してください。');
 };
 
@@ -142,13 +227,13 @@ window.editDate = function(colId) {
     const newDate = prompt('日程を入力してください (例: 2026-04-15)', col.date);
     if (newDate !== null && newDate.trim() !== '') {
         col.date = newDate.trim();
-        saveData();
         renderTable();
+        saveData();
     } else if (newDate !== null && newDate.trim() === '') {
         if(confirm('この列を削除しますか？')) {
             historyData = historyData.filter(c => c.id !== colId);
-            saveData();
             renderTable();
+            saveData();
             showToast('列を削除しました。');
         }
     }
@@ -161,8 +246,8 @@ window.editContent = function(colId) {
     const newContent = prompt('活動内容を入力してください', col.content);
     if (newContent !== null) {
         col.content = newContent.trim();
-        saveData();
         renderTable();
+        saveData();
     }
 };
 
@@ -172,28 +257,23 @@ window.editMemberName = function(memberId) {
     
     if (newName !== null && newName.trim() !== '') {
         memberNames[memberId] = newName.trim();
-        saveData();
         renderTable();
+        saveData();
     }
 };
 
-// --- Export & Import ---
+// --- Export & Import (バックアップ用) ---
 function exportData() {
-    const dataToExport = {
-        memberNames,
-        historyData
-    };
-    
+    const dataToExport = { memberNames, historyData };
     const dataStr = JSON.stringify(dataToExport, null, 2);
     const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
     
-    const exportFileDefaultName = `消防団出席データ_${new Date().toISOString().split('T')[0]}.json`;
+    const exportFileDefaultName = `消防団出席データ_backup_${new Date().toISOString().split('T')[0]}.json`;
     
     const linkElement = document.createElement('a');
     linkElement.setAttribute('href', dataUri);
     linkElement.setAttribute('download', exportFileDefaultName);
     linkElement.click();
-    
     showToast('データをエクスポートしました。');
 }
 
@@ -205,51 +285,18 @@ function importData(event) {
     reader.onload = (e) => {
         try {
             const importedData = JSON.parse(e.target.result);
+            if (!importedData.memberNames || !importedData.historyData) throw new Error('Invalid format');
             
-            if (!importedData.memberNames || !importedData.historyData) {
-                throw new Error('Invalid format (v2)');
-            }
-            
-            if (confirm('既存のデータを上書きしますか？')) {
+            if (confirm('既存のデータを上書きしますか？（サーバー上のデータも上書きされます）')) {
                 memberNames = importedData.memberNames;
                 historyData = importedData.historyData;
-                
-                saveData();
                 renderTable();
+                saveData(); // サーバーにも反映
                 showToast('データをインポートしました。');
             }
         } catch (err) {
             console.error(err);
-            
-            // Try to import v1 data as fallback
-            try {
-                const importedV1 = JSON.parse(e.target.result);
-                if (Array.isArray(importedV1)) {
-                    if (confirm('古い形式のデータが検出されました。変換してインポートしますか？')) {
-                        // Convert v1 to v2
-                        historyData = importedV1.map(v1 => {
-                            const newAtt = {};
-                            Object.keys(v1.attendance).forEach(k => {
-                                newAtt[k] = v1.attendance[k] ? 'attend' : 'absent';
-                            });
-                            return {
-                                id: v1.id,
-                                date: v1.date,
-                                content: v1.content,
-                                attendance: newAtt
-                            };
-                        });
-                        saveData();
-                        renderTable();
-                        showToast('古い形式のデータを変換してインポートしました。');
-                        return;
-                    }
-                } else {
-                    showToast('ファイルの読み込みに失敗しました。形式を確認してください。');
-                }
-            } catch(e2) {
-                showToast('ファイルの読み込みに失敗しました。形式を確認してください。');
-            }
+            showToast('ファイルの読み込みに失敗しました。形式を確認してください。');
         }
     };
     reader.readAsText(file);
@@ -273,9 +320,6 @@ function showToast(message) {
 function setupEventListeners() {
     btnExport.addEventListener('click', exportData);
     inputImport.addEventListener('change', importData);
-    
-    // Attach window functions to global scope since they are used in onclick inline handlers
-    // (Already attached as window.xxx = function...)
 }
 
 // --- Run ---
