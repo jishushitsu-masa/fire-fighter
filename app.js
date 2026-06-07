@@ -2,7 +2,7 @@
 const MEMBERS_COUNT = 20;
 
 // 【重要】ここにGASで発行された「ウェブアプリのURL」を貼り付けてください
-const GAS_WEBAPP_URL = "";
+const GAS_WEBAPP_URL = "https://script.google.com/macros/s/AKfycbwy2o-hIHq52X2xKybB6dkn_adOEw29HbXgj7n75AweECdf7sF2UkJ-LHmM9ptjg2B6/exec";
 
 let historyData = []; // [{ id, date, content, attendance: { memberId: 'attend' | 'absent' | '' } }]
 let memberNames = {}; // { 1: '団員1', 2: '団員2', ... }
